@@ -59,10 +59,10 @@ IMAGE_Y = 200
 # Frame Debouncing
 # ---- helpers ----
 FINGER_TIPS_R = {  # right hand note mapping: note_index -> (tip_id, prev_joint_id)
-    0: (4, 2),     # thumb: tip 4 vs joint 2 (or 3 if you prefer)
-    1: (8, 7),     # index
-    2: (12, 11),   # middle
-    3: (16, 15),   # ring
+    0: (4, 1),     # thumb: tip 4 vs joint 2 (or 3 if you prefer)
+    1: (8, 6),     # index
+    2: (12, 10),   # middle
+    3: (16, 14),   # ring
     # pinky optional: (20, 19)
 }
 
@@ -75,7 +75,7 @@ def finger_is_down(tip, prev, lm):
     else:
         return lm[tip][0] > lm[prev][0]  # for thumb
 
-def detect_notes_this_frame(lm_right, currChord):
+def detect_notes_this_frame(lm_right, currChord, draw=True):
     """
     Build the set of (chord, note) currently pressed by the RIGHT hand.
     lm_right: list like [[id, x, y], ...] from your HandTrackingModule for the right hand.
@@ -92,6 +92,10 @@ def detect_notes_this_frame(lm_right, currChord):
             # only add if that note exists in this chord bank
             if currChord < len(chords) and note_idx < len(chords[currChord]):
                 pressed.add((currChord, note_idx))
+
+                if draw and tip in lm:
+                    x, y = lm[tip]
+                    cv2.circle(img, (x, y), 15, (0, 255, 0), cv2.FILLED)
     return pressed
 
 def play_frame(pressed_now, pressed_prev):
@@ -104,32 +108,13 @@ pressed_prev = set()
 
 
 currChord = -1
-chordVer = 0
+chordVer = 1
 while True:
     success, img = cap.read()
     img = detector.findHands(img)
 
     lmListRight = detector.findPosition(img, draw=False, handedness="Right")
     lmListLeft = detector.findPosition(img, draw=False, handedness="Left")
-
-    # if len(lmList0) != 0:
-    #     thumb1, thumb2 = lmList0[4], lmList0[2]
-    #     index1, index2 = lmList0[8], lmList0[7]
-    #     middle1, middle2 = lmList0[12], lmList0[11]
-    #     ring1, ring2 = lmList0[16], lmList0[15]
-    #     pinky1, pinky2 = lmList0[20], lmList0[19]
-    #
-    #     if currChord >= 0:
-    #         if thumb1[1] > thumb2[1]:
-    #             playNote(currChord, 0)
-    #         if index1[2] > index2[2]:
-    #             playNote(currChord, 1)
-    #         if middle1[2] > middle2[2]:
-    #             playNote(currChord, 2)
-    #         if ring1[2] > ring2[2]:
-    #             playNote(currChord, 3)
-    #         if pinky1[2] > pinky2[2]:
-    #             pass
 
     if len(lmListLeft) != 0:
         thumb1, thumb2 = lmListLeft[4], lmListLeft[2]
@@ -140,21 +125,29 @@ while True:
 
         h, w, c = img.shape
         x, y = w-IMAGE_X, 0
+        finX, finY = 0, 0
 
         if thumb1[1] < thumb2[1]:
             img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[0]
+            finX, finY = thumb1[1], thumb1[2]
             currChord = 0
         elif index1[2] > index2[2]:
             img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[1]
+            finX, finY = index1[1], index1[2]
             currChord = 1
         elif middle1[2] > middle2[2]:
             img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[2]
+            finX, finY = middle1[1], middle1[2]
             currChord = 2
         elif ring1[2] > ring2[2]:
             img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[3]
+            finX, finY = ring1[1], ring1[2]
             currChord = 3
         else:
             currChord = -1
+
+        if currChord >= 0:
+            cv2.circle(img, (finX, finY), 15, (0, 0, 255), cv2.FILLED)
 
         if pinky1[2] > pinky2[2]:
             chordVer = 1
