@@ -3,10 +3,19 @@ import asyncio
 import cv2
 import mediapipe as mp
 import time
+import numpy as np
+
+from numpy.ma.core import filled
+
 import HandTrackingModule as htm
 import os
 import pygame
+import math
 from collections import defaultdict
+
+from ctypes import POINTER, cast
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
 pTime = 0
 cTime = 0
@@ -15,6 +24,15 @@ detector = htm.handDetector()
 
 pygame.mixer.init()
 pygame.mixer.set_num_channels(64)
+
+
+device = AudioUtilities.GetSpeakers()
+deviceVolume = device.EndpointVolume  # IAudioEndpointVolume wrapper
+
+volRange = deviceVolume.GetVolumeRange()
+lowV, highV = volRange[0], volRange[1]
+
+
 
 base_dir = os.path.dirname(__file__)
 chords_root = os.path.join(base_dir, "chords")
@@ -127,7 +145,32 @@ while True:
         x, y = w-IMAGE_X, 0
         finX, finY = 0, 0
 
-        if thumb1[1] < thumb2[1]:
+        allDown = False
+        if thumb1[1] < thumb2[1] and index1[2] > index2[2] and middle1[2] > middle2[2] and ring1[2] > ring2[2] and \
+                pinky1[2] > pinky2[2]:
+            if len(lmListRight) != 0:
+                currChord = -1
+
+                # Right Hand Finger Tips and UI
+                x1, y1 = lmListRight[4][1], lmListRight[4][2]
+                x2, y2 = lmListRight[8][1], lmListRight[8][2]
+                dist = math.hypot(x2 - x1, y2 - y1)
+                cv2.line(img, (x1, y1), (x2, y2), (255, 0, 0), 3)
+
+                # Volume UI
+                vBarW, vBarH = 20, 200
+                vBarX, vBarY = 10, 200
+                cv2.rectangle(img, (vBarX, vBarY), (vBarX+vBarW, vBarY+vBarH), (100, 100, 100), 3)
+                volume = dist/vBarH * 100 - h/50
+                volume = max(0, min(volume, 100))
+                cv2.putText(img, str("Volume: ")+str(int(volume))+str("%"), (vBarX, vBarH+vBarY+50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 100, 100), 3)
+                cv2.rectangle(img, (vBarX, vBarY+vBarH-int(vBarH*volume/100)), (vBarX+vBarW, vBarY+vBarH), (100, 255, 100), cv2.FILLED)
+
+
+                vol_scalar = float(np.interp(volume, (0, 100), (lowV, highV)))
+                deviceVolume.SetMasterVolumeLevel(vol_scalar, None)
+
+        elif thumb1[1] < thumb2[1]:
             img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[0]
             finX, finY = thumb1[1], thumb1[2]
             currChord = 0
@@ -145,6 +188,8 @@ while True:
             currChord = 3
         else:
             currChord = -1
+
+
 
         if currChord >= 0:
             cv2.circle(img, (finX, finY), 15, (0, 0, 255), cv2.FILLED)
@@ -167,7 +212,7 @@ while True:
     fps = 1 / (cTime - pTime)
     pTime = cTime
 
-    cv2.putText(img, str(int(fps)), (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 3)
+    cv2.putText(img, str("FPS: ") + str(int(fps)), (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 2, (50, 200, 50), 2)
 
     cv2.imshow("Image", img)
     cv2.waitKey(1)
