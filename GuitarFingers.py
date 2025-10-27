@@ -20,6 +20,9 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 pTime = 0
 cTime = 0
 cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    raise RuntimeError("Camera not opened. Try indices 1, 2, or a different backend.")
+
 detector = htm.handDetector()
 
 pygame.mixer.init()
@@ -112,8 +115,8 @@ def detect_notes_this_frame(lm_right, currChord, draw=True):
                 pressed.add((currChord, note_idx))
 
                 if draw and tip in lm:
-                    x, y = lm[tip]
-                    cv2.circle(img, (x, y), 15, (0, 255, 0), cv2.FILLED)
+                    finX, finY = lm[tip]
+                    cv2.circle(img, (finX, finY), 15, (0, 255, 0), cv2.FILLED)
     return pressed
 
 def play_frame(pressed_now, pressed_prev):
@@ -129,6 +132,8 @@ currChord = -1
 chordVer = 1
 while True:
     success, img = cap.read()
+    if not success or img is None:
+        continue
     img = detector.findHands(img)
 
     lmListRight = detector.findPosition(img, draw=False, handedness="Right")

@@ -1,4 +1,4 @@
-import cv2
+import cv2, numpy as np
 import mediapipe as mp
 import time
 
@@ -17,6 +17,7 @@ class handDetector():
 
     def findHands(self, img, draw=True):
         imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        imgRGB = np.ascontiguousarray(imgRGB, dtype=np.uint8)
         self.results = self.hands.process(imgRGB)
 
         if self.results.multi_hand_landmarks:
