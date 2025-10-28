@@ -4,8 +4,10 @@ import cv2, tkinter as tk
 import mediapipe as mp
 import time
 import numpy as np
+from Scripts.activate_this import prev_length
 
 from numpy.ma.core import filled
+from scipy.constants import milli
 
 import HandTrackingModule as htm
 import os
@@ -17,6 +19,8 @@ from ctypes import POINTER, cast
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
+# import Microcontroller as mc
+
 pTime = 0
 cTime = 0
 cap = cv2.VideoCapture(0)
@@ -25,11 +29,6 @@ if not cap.isOpened():
 
 win = "Guitar Fingers"
 cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)  # create window first
-# root = tk.Tk();
-# root.withdraw()
-# screen_w = root.winfo_screenwidth()
-# screen_h = root.winfo_screenheight()
-# cv2.resizeWindow(win, int(screen_w), int(screen_h))
 
 
 
@@ -103,7 +102,9 @@ def finger_is_down(tip, prev, lm):
     if tip not in lm or prev not in lm:
         return False
     if tip > 4:
+
         return lm[tip][1] > lm[prev][1]  # lm[id] = (x, y)
+
     else:
         return lm[tip][0] < lm[prev][0]  # for thumb
 
@@ -128,6 +129,7 @@ def detect_notes_this_frame(lm_right, currChord, draw=True):
                 if draw and tip in lm:
                     finX, finY = lm[tip]
                     cv2.circle(img, (finX, finY), 15, (0, 255, 0), cv2.FILLED)
+
     return pressed
 
 def play_frame(pressed_now, pressed_prev):
@@ -141,14 +143,22 @@ pressed_prev = set()
 
 currChord = -1
 chordVer = 1
+
+currFrame = 0
+prevLeftHand = list()
+prevTime = 0
+swiped = False
+
 while True:
     success, img = cap.read()
     if not success or img is None:
         continue
+
+    currFrame+=1
     img = detector.findHands(img)
 
-    lmListLeft = detector.findPosition(img, draw=False, handedness="Right")
-    lmListRight = detector.findPosition(img, draw=False, handedness="Left")
+    lmListLeft = detector.findPosition(img, handedness="Right")
+    lmListRight = detector.findPosition(img, handedness="Left")
 
     if len(lmListLeft) != 0:
         thumb1, thumb2 = lmListLeft[4], lmListLeft[2]
@@ -166,6 +176,7 @@ while True:
                 pinky1[2] > pinky2[2]:
             if len(lmListRight) != 0:
                 currChord = -1
+
 
                 # Right Hand Finger Tips and UI
                 x1, y1 = lmListRight[4][1], lmListRight[4][2]
@@ -206,15 +217,36 @@ while True:
         else:
             currChord = -1
 
+        # Check for fast hand swipe
+        if currFrame % 5 == 0:
+            currTime = time.time()
+            if prevLeftHand:
+                for i in (4, 20, 4):
+                    swipeDist = lmListLeft[i][1] - prevLeftHand[i][1]
+                    swipeSpeed = abs(swipeDist / (currTime - prevTime))
+                    if swipeSpeed > 700:
+                        print("swiped")
+                        swiped = True
+                    else:
+                        swiped = False
+
+            prevLeftHand = lmListLeft
+            prevTime = time.time()
+
+        if swiped:
+            print("Swiped")
 
 
-        if currChord >= 0:
-            cv2.circle(img, (finX, finY), 15, (0, 0, 255), cv2.FILLED)
+
+
+    if currChord >= 0:
+        cv2.circle(img, (finX, finY), 15, (0, 0, 255), cv2.FILLED)
 
         if pinky1[2] > pinky2[2]:
             chordVer = 1
         else:
             chordVer = 0
+
 
         # 3) Build pressed_now from RIGHT hand; NO direct play() calls here
         pressed_now = detect_notes_this_frame(lmListRight, currChord)
