@@ -1,6 +1,6 @@
 import asyncio
 
-import cv2
+import cv2, tkinter as tk
 import mediapipe as mp
 import time
 import numpy as np
@@ -22,6 +22,17 @@ cTime = 0
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     raise RuntimeError("Camera not opened. Try indices 1, 2, or a different backend.")
+
+win = "Guitar Fingers"
+cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)  # create window first
+# root = tk.Tk();
+# root.withdraw()
+# screen_w = root.winfo_screenwidth()
+# screen_h = root.winfo_screenheight()
+# cv2.resizeWindow(win, int(screen_w), int(screen_h))
+
+
+
 
 detector = htm.handDetector()
 
@@ -94,7 +105,7 @@ def finger_is_down(tip, prev, lm):
     if tip > 4:
         return lm[tip][1] > lm[prev][1]  # lm[id] = (x, y)
     else:
-        return lm[tip][0] > lm[prev][0]  # for thumb
+        return lm[tip][0] < lm[prev][0]  # for thumb
 
 def detect_notes_this_frame(lm_right, currChord, draw=True):
     """
@@ -136,8 +147,8 @@ while True:
         continue
     img = detector.findHands(img)
 
-    lmListRight = detector.findPosition(img, draw=False, handedness="Right")
-    lmListLeft = detector.findPosition(img, draw=False, handedness="Left")
+    lmListLeft = detector.findPosition(img, draw=False, handedness="Right")
+    lmListRight = detector.findPosition(img, draw=False, handedness="Left")
 
     if len(lmListLeft) != 0:
         thumb1, thumb2 = lmListLeft[4], lmListLeft[2]
@@ -151,7 +162,7 @@ while True:
         finX, finY = 0, 0
 
         allDown = False
-        if thumb1[1] < thumb2[1] and index1[2] > index2[2] and middle1[2] > middle2[2] and ring1[2] > ring2[2] and \
+        if thumb1[1] > thumb2[1] and index1[2] > index2[2] and middle1[2] > middle2[2] and ring1[2] > ring2[2] and \
                 pinky1[2] > pinky2[2]:
             if len(lmListRight) != 0:
                 currChord = -1
@@ -172,10 +183,11 @@ while True:
                 cv2.rectangle(img, (vBarX, vBarY+vBarH-int(vBarH*volume/100)), (vBarX+vBarW, vBarY+vBarH), (100, 255, 100), cv2.FILLED)
 
 
-                vol_scalar = float(np.interp(volume, (0, 100), (lowV, highV)))
-                deviceVolume.SetMasterVolumeLevel(vol_scalar, None)
+                vol_scalar = volume/100
 
-        elif thumb1[1] < thumb2[1]:
+                deviceVolume.SetMasterVolumeLevelScalar(vol_scalar, None)
+
+        elif thumb1[1] > thumb2[1]:
             img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[0]
             finX, finY = thumb1[1], thumb1[2]
             currChord = 0
@@ -219,5 +231,6 @@ while True:
 
     cv2.putText(img, str("FPS: ") + str(int(fps)), (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 2, (50, 200, 50), 2)
 
-    cv2.imshow("Image", img)
+    cv2.imshow("Guitar Fingers", img)
+    cv2.setWindowProperty("Guitar Fingers", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     cv2.waitKey(1)
