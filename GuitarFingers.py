@@ -18,6 +18,7 @@ from collections import defaultdict
 from ctypes import POINTER, cast
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from collections import deque
 
 # import Microcontroller as mc
 
@@ -138,16 +139,30 @@ def play_frame(pressed_now, pressed_prev):
         chords[key[0]][key[1]].play()
     return pressed_now.copy()  # the new pressed_prev
 
+
 pressed_prev = set()
 
-
+# Chord group variables
 currChord = -1
 chordVer = 1
+chordGroup = 0
+maxChordGroups = 3
 
+#swipe Variables
+prevPos = list()
 currFrame = 0
 prevLeftHand = list()
 prevTime = 0
 swiped = False
+COOLDOWN_TIME = 2
+cooldownCounter = 0
+
+
+# loop through chord folder to get max chord groups
+
+async def debounce(time):
+    time.sleep(time)
+    swipeDebounce = True
 
 while True:
     success, img = cap.read()
@@ -217,24 +232,37 @@ while True:
         else:
             currChord = -1
 
-        # Check for fast hand swipe
+        # Check for swipe
+
         if currFrame % 5 == 0:
             currTime = time.time()
-            if prevLeftHand:
-                for i in (4, 20, 4):
-                    swipeDist = lmListLeft[i][1] - prevLeftHand[i][1]
-                    swipeSpeed = abs(swipeDist / (currTime - prevTime))
-                    if swipeSpeed > 700:
-                        print("swiped")
+            swipePoint = lmListLeft[12][1]
+            if prevLeftHand and len(prevPos) > 1:
+                swipeSpeed = (swipePoint-prevPos[-1]) / (currTime - prevTime)
+                if abs(swipeSpeed) > 700 and currTime-cooldownCounter >= COOLDOWN_TIME:
+                    if swipeSpeed < 0:
                         swiped = True
+                        cooldownCounter = time.time()
+                        if (chordGroup < maxChordGroups):
+                            chordGroup += 1
+                        else:
+                            chordGroup = 0
+                        print(chordGroup)
                     else:
-                        swiped = False
+                        print("swiped left")
+                else:
+                    swiped = False
+
+            prevTime = currTime
+            prevPos.append(swipePoint)
+            # Only keep 30 frames in cycle
+            if len(prevPos) > 30:
+                prevPos.pop(0)
 
             prevLeftHand = lmListLeft
             prevTime = time.time()
 
-        if swiped:
-            print("Swiped")
+
 
 
 
