@@ -22,6 +22,8 @@ from collections import deque
 
 # import Microcontroller as mc
 
+
+# Video capture
 pTime = 0
 cTime = 0
 cap = cv2.VideoCapture(0)
@@ -31,48 +33,60 @@ if not cap.isOpened():
 win = "Guitar Fingers"
 cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)  # create window first
 
+width = 1280
+height = 720
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
 
 
+# Initializing hand detector module
 detector = htm.handDetector()
 
+# Sound control initializations
 pygame.mixer.init()
 pygame.mixer.set_num_channels(64)
-
-
 device = AudioUtilities.GetSpeakers()
 deviceVolume = device.EndpointVolume  # IAudioEndpointVolume wrapper
-
 volRange = deviceVolume.GetVolumeRange()
 lowV, highV = volRange[0], volRange[1]
 
 
-
+# Loading chords
 base_dir = os.path.dirname(__file__)
-chords_root = os.path.join(base_dir, "chords")
+chordGroups = os.path.join(base_dir, "chordGroups")
 valid_exts = {".wav", ".ogg", ".mp3"}
 
-# Build: chords[0] -> sounds from folder "chord0", chords[1] -> "chord1", ...
-_by_index = {}  # temp: idx -> [Sound, ...]
-for entry in os.listdir(chords_root):
-    entry_path = os.path.join(chords_root, entry)
-    if not os.path.isdir(entry_path):
-        continue
-    if not entry.startswith("chord"):
-        continue
-    # parse numeric index after "chord"
-    try:
-        idx = int(entry[5:])
-    except ValueError:
-        continue
+# Chord group variables
+currChord = -1
+chordVer = 1
+chordGroup = 1
+maxChordGroups = 0
 
-    sounds = []
-    for fname in sorted(os.listdir(entry_path)):
-        name, ext = os.path.splitext(fname)
-        if ext.lower() in valid_exts:
-            sounds.append(pygame.mixer.Sound(os.path.join(entry_path, fname)))
-    if sounds:
-        _by_index[idx] = sounds
+for group in os.scandir(chordGroups):
+    maxChordGroups += 1
+    chords_root = os.path.join(base_dir, group)
+    # Build: chords[0] -> sounds from folder "chord0", chords[1] -> "chord1", ...
+    _by_index = {}  # temp: idx -> [Sound, ...]
+    for entry in os.listdir(chords_root):
+        entry_path = os.path.join(chords_root, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        if not entry.startswith("chord"):
+            continue
+        # parse numeric index after "chord"
+        try:
+            idx = int(entry[5:])
+        except ValueError:
+            continue
+
+        sounds = []
+        for fname in sorted(os.listdir(entry_path)):
+            name, ext = os.path.splitext(fname)
+            if ext.lower() in valid_exts:
+                sounds.append(pygame.mixer.Sound(os.path.join(entry_path, fname)))
+        if sounds:
+            _by_index[idx] = sounds
 
 # Convert sparse dict to dense list indexed by chord number
 max_idx = max(_by_index.keys(), default=-1)
@@ -91,7 +105,7 @@ IMAGE_Y = 200
 # Frame Debouncing
 # ---- helpers ----
 FINGER_TIPS_R = {  # right hand note mapping: note_index -> (tip_id, prev_joint_id)
-    0: (4, 1),     # thumb: tip 4 vs joint 2 (or 3 if you prefer)
+    0: (4, 2),     # thumb: tip 4 vs joint 2 (or 3 if you prefer)
     1: (8, 6),     # index
     2: (12, 10),   # middle
     3: (16, 14),   # ring
@@ -142,17 +156,14 @@ def play_frame(pressed_now, pressed_prev):
 
 pressed_prev = set()
 
-# Chord group variables
-currChord = -1
-chordVer = 1
-chordGroup = 0
-maxChordGroups = 3
+
 
 #swipe Variables
 prevPos = list()
 currFrame = 0
 prevLeftHand = list()
 prevTime = 0
+currTime = 0
 swiped = False
 COOLDOWN_TIME = 2
 cooldownCounter = 0
@@ -175,7 +186,16 @@ while True:
     lmListLeft = detector.findPosition(img, handedness="Right")
     lmListRight = detector.findPosition(img, handedness="Left")
 
+    if (currTime - cooldownCounter >= COOLDOWN_TIME):
+        cv2.putText(img, str("Chord Group: ") + str(int(chordGroup)), (10, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                1, (255, 255, 255), 3)
+    else:
+        cv2.putText(img, str("Chord Group: ") + str(int(chordGroup)), (10, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0, 0, 255), 3)
+
     if len(lmListLeft) != 0:
+
+
         thumb1, thumb2 = lmListLeft[4], lmListLeft[2]
         index1, index2 = lmListLeft[8], lmListLeft[6]
         middle1, middle2 = lmListLeft[12], lmListLeft[10]
@@ -246,8 +266,7 @@ while True:
                         if (chordGroup < maxChordGroups):
                             chordGroup += 1
                         else:
-                            chordGroup = 0
-                        print(chordGroup)
+                            chordGroup = 1
                     else:
                         print("swiped left")
                 else:
@@ -264,9 +283,6 @@ while True:
 
 
 
-
-
-
     if currChord >= 0:
         cv2.circle(img, (finX, finY), 15, (0, 0, 255), cv2.FILLED)
 
@@ -274,7 +290,6 @@ while True:
             chordVer = 1
         else:
             chordVer = 0
-
 
         # 3) Build pressed_now from RIGHT hand; NO direct play() calls here
         pressed_now = detect_notes_this_frame(lmListRight, currChord)
