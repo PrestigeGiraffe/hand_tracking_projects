@@ -20,7 +20,6 @@ from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from collections import deque
 
-# import Microcontroller as mc
 
 
 # Video capture
@@ -52,52 +51,87 @@ volRange = deviceVolume.GetVolumeRange()
 lowV, highV = volRange[0], volRange[1]
 
 
-# Loading chords
+# Loading instruments
 base_dir = os.path.dirname(__file__)
-chordGroups = os.path.join(base_dir, "chordGroups")
+instruments = os.path.join(base_dir, "instruments")
 valid_exts = {".wav", ".ogg", ".mp3"}
 
 # Chord group variables
 currChord = -1
 chordVer = 1
-chordGroup = 1
+chordGroup = 0
 maxChordGroups = 0
 
-for group in os.scandir(chordGroups):
-    maxChordGroups += 1
-    chords_root = os.path.join(base_dir, group)
-    # Build: chords[0] -> sounds from folder "chord0", chords[1] -> "chord1", ...
-    _by_index = {}  # temp: idx -> [Sound, ...]
-    for entry in os.listdir(chords_root):
-        entry_path = os.path.join(chords_root, entry)
-        if not os.path.isdir(entry_path):
-            continue
-        if not entry.startswith("chord"):
-            continue
-        # parse numeric index after "chord"
-        try:
-            idx = int(entry[5:])
-        except ValueError:
-            continue
+chords_by_group = []
 
-        sounds = []
-        for fname in sorted(os.listdir(entry_path)):
-            name, ext = os.path.splitext(fname)
-            if ext.lower() in valid_exts:
-                sounds.append(pygame.mixer.Sound(os.path.join(entry_path, fname)))
-        if sounds:
-            _by_index[idx] = sounds
+for inst in sorted([e for e in os.scandir(instruments) if e.is_dir()], key=lambda e: e.name):
+    for g_entry in sorted([e for e in os.scandir(inst.path) if e.is_dir()], key=lambda e: e.name):
+        group_dir = g_entry.path
+        by_index = {}  # chord_idx -> [Sound, ...]
+        for c_entry in sorted(
+            [e for e in os.scandir(group_dir) if e.is_dir() and e.name.startswith("chord")],
+            key=lambda e: e.name
+        ):
+            name = c_entry.name[5:]
+            if name.isdigit():
+                chord_idx = int(name)
+                sounds = []
+                for fname in sorted(os.listdir(c_entry.path)):
+                    _, ext = os.path.splitext(fname)
+                    if ext.lower() in valid_exts:
+                        sounds.append(pygame.mixer.Sound(os.path.join(c_entry.path, fname)))
+                by_index[chord_idx] = sounds
+        max_idx = max(by_index.keys(), default=-1)
+        chords_by_group.append([by_index.get(i, []) for i in range(max_idx + 1)])
 
-# Convert sparse dict to dense list indexed by chord number
-max_idx = max(_by_index.keys(), default=-1)
-chords = [ _by_index.get(i, []) for i in range(max_idx + 1) ]
+maxChordGroups = len(chords_by_group)
+
+# for instrument in os.scandir(instruments):
+#     for group in os.scandir(instrument):
+#         maxChordGroups += 1
+#         chords_root = os.path.join(base_dir, group)
+#         # Build: chords[0] -> sounds from folder "chord0", chords[1] -> "chord1", ...
+#         _by_index = {}  # temp: idx -> [Sound, ...]
+#         for entry in os.listdir(chords_root):
+#             entry_path = os.path.join(chords_root, entry)
+#             if not os.path.isdir(entry_path):
+#                 continue
+#             if not entry.startswith("chord"):
+#                 continue
+#             # parse numeric index after "chord"
+#             try:
+#                 idx = int(entry[5:])
+#             except ValueError:
+#                 continue
+#
+#             sounds = []
+#             for fname in sorted(os.listdir(entry_path)):
+#                 name, ext = os.path.splitext(fname)
+#                 if ext.lower() in valid_exts:
+#                     sounds.append(pygame.mixer.Sound(os.path.join(entry_path, fname)))
+#             if sounds:
+#                 _by_index[idx] = sounds
+
+
+
 
 fingerPath = "FingerPositions"
-fingerPositions = os.listdir(fingerPath)
-overlayList = []
-for imPath in fingerPositions:
-    imPath = cv2.imread(f'{fingerPath}/{imPath}')
-    overlayList.append(imPath)
+
+overlayList = []  # 2D: [group][image]
+for group in sorted(os.listdir(fingerPath)):
+    group_dir = os.path.join(fingerPath, group)
+    if not os.path.isdir(group_dir):
+        continue
+    chordsOverlayList = []
+    for fname in sorted(os.listdir(group_dir)):
+        im = cv2.imread(os.path.join(group_dir, fname), cv2.IMREAD_UNCHANGED)
+        if im is None:
+            continue
+        # drop alpha if present so assignment works with BGR targets
+        if im.ndim == 3 and im.shape[2] == 4:
+            im = im[:, :, :3]
+        chordsOverlayList.append(im)
+    overlayList.append(chordsOverlayList)
 
 IMAGE_X = 200
 IMAGE_Y = 200
@@ -123,35 +157,38 @@ def finger_is_down(tip, prev, lm):
     else:
         return lm[tip][0] < lm[prev][0]  # for thumb
 
-def detect_notes_this_frame(lm_right, currChord, draw=True):
-    """
-    Build the set of (chord, note) currently pressed by the RIGHT hand.
-    lm_right: list like [[id, x, y], ...] from your HandTrackingModule for the right hand.
-    """
+def detect_notes_this_frame(lm_right, group_idx, chord_idx, draw=True):
     pressed = set()
-    if currChord < 0 or not lm_right:
+    if chord_idx < 0 or not lm_right:
         return pressed
 
-    # quick lookup: id -> (x, y)
     lm = {lid: (x, y) for (lid, x, y) in lm_right}
+    bank = chords_by_group[group_idx]
+
 
     for note_idx, (tip, prev) in FINGER_TIPS_R.items():
         if finger_is_down(tip, prev, lm):
-            # only add if that note exists in this chord bank
-            if currChord < len(chords) and note_idx < len(chords[currChord]):
-                pressed.add((currChord, note_idx))
-
+            print(len(chords_by_group))
+            print(group_idx % maxChordGroups)
+            print(chord_idx)
+            print(len(bank))
+            print("seperate")
+            print(note_idx)
+            print(len(bank[chord_idx]))
+            if chord_idx < len(bank) and note_idx < len(bank[chord_idx]):
+                pressed.add((chord_idx, note_idx))
                 if draw and tip in lm:
                     finX, finY = lm[tip]
                     cv2.circle(img, (finX, finY), 15, (0, 255, 0), cv2.FILLED)
-
     return pressed
+
 
 def play_frame(pressed_now, pressed_prev):
     new_presses = pressed_now - pressed_prev
-    for key in new_presses:
-        chords[key[0]][key[1]].play()
-    return pressed_now.copy()  # the new pressed_prev
+    bank = chords_by_group[chordGroup % maxChordGroups]  # <<< add modulo
+    for chord_idx, note_idx in new_presses:
+        bank[chord_idx][note_idx].play()
+    return pressed_now.copy()
 
 
 pressed_prev = set()
@@ -165,7 +202,7 @@ prevLeftHand = list()
 prevTime = 0
 currTime = 0
 swiped = False
-COOLDOWN_TIME = 2
+COOLDOWN_TIME = 1.5
 cooldownCounter = 0
 
 
@@ -187,15 +224,13 @@ while True:
     lmListRight = detector.findPosition(img, handedness="Left")
 
     if (currTime - cooldownCounter >= COOLDOWN_TIME):
-        cv2.putText(img, str("Chord Group: ") + str(int(chordGroup)), (10, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.putText(img, str("Chord Group: ") + str(int(chordGroup+1)), (10, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
                 1, (255, 255, 255), 3)
     else:
-        cv2.putText(img, str("Chord Group: ") + str(int(chordGroup)), (10, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.putText(img, str("Chord Group: ") + str(int(chordGroup+1)), (10, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
                     1, (0, 0, 255), 3)
 
     if len(lmListLeft) != 0:
-
-
         thumb1, thumb2 = lmListLeft[4], lmListLeft[2]
         index1, index2 = lmListLeft[8], lmListLeft[6]
         middle1, middle2 = lmListLeft[12], lmListLeft[10]
@@ -206,13 +241,10 @@ while True:
         x, y = w-IMAGE_X, 0
         finX, finY = 0, 0
 
-        allDown = False
         if thumb1[1] > thumb2[1] and index1[2] > index2[2] and middle1[2] > middle2[2] and ring1[2] > ring2[2] and \
                 pinky1[2] > pinky2[2]:
             if len(lmListRight) != 0:
                 currChord = -1
-
-
                 # Right Hand Finger Tips and UI
                 x1, y1 = lmListRight[4][1], lmListRight[4][2]
                 x2, y2 = lmListRight[8][1], lmListRight[8][2]
@@ -228,29 +260,24 @@ while True:
                 cv2.putText(img, str("Volume: ")+str(int(volume))+str("%"), (vBarX, vBarH+vBarY+50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 100, 100), 3)
                 cv2.rectangle(img, (vBarX, vBarY+vBarH-int(vBarH*volume/100)), (vBarX+vBarW, vBarY+vBarH), (100, 255, 100), cv2.FILLED)
 
-
                 vol_scalar = volume/100
-
                 deviceVolume.SetMasterVolumeLevelScalar(vol_scalar, None)
-
         elif thumb1[1] > thumb2[1]:
-            img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[0]
             finX, finY = thumb1[1], thumb1[2]
             currChord = 0
         elif index1[2] > index2[2]:
-            img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[1]
             finX, finY = index1[1], index1[2]
             currChord = 1
         elif middle1[2] > middle2[2]:
-            img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[2]
             finX, finY = middle1[1], middle1[2]
             currChord = 2
         elif ring1[2] > ring2[2]:
-            img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[3]
             finX, finY = ring1[1], ring1[2]
             currChord = 3
         else:
             currChord = -1
+
+        img[y:y + IMAGE_Y, x:x + IMAGE_X] = overlayList[chordGroup][currChord]
 
         # Check for swipe
 
@@ -263,10 +290,10 @@ while True:
                     if swipeSpeed < 0:
                         swiped = True
                         cooldownCounter = time.time()
-                        if (chordGroup < maxChordGroups):
+                        if (chordGroup < maxChordGroups-1):
                             chordGroup += 1
                         else:
-                            chordGroup = 1
+                            chordGroup = 0
                     else:
                         print("swiped left")
                 else:
@@ -281,8 +308,6 @@ while True:
             prevLeftHand = lmListLeft
             prevTime = time.time()
 
-
-
     if currChord >= 0:
         cv2.circle(img, (finX, finY), 15, (0, 0, 255), cv2.FILLED)
 
@@ -291,10 +316,7 @@ while True:
         else:
             chordVer = 0
 
-        # 3) Build pressed_now from RIGHT hand; NO direct play() calls here
-        pressed_now = detect_notes_this_frame(lmListRight, currChord)
-
-        # 4) Edge-trigger playback
+        pressed_now = detect_notes_this_frame(lmListRight, chordGroup, currChord)
         pressed_prev = play_frame(pressed_now, pressed_prev)
 
 
@@ -306,6 +328,5 @@ while True:
 
     cv2.putText(img, str("FPS: ") + str(int(fps)), (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 2, (50, 200, 50), 2)
 
-    cv2.imshow("Guitar Fingers", img)
-    cv2.setWindowProperty("Guitar Fingers", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    cv2.imshow(win, img)
     cv2.waitKey(1)

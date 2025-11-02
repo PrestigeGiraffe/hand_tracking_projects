@@ -4,7 +4,7 @@ import pyfirmata2
 import numpy as np
 
 #Arduino Set Up
-PORT = 'COM12'
+PORT = 'COM17'
 PIN_SERVO1 = 9
 
 board = pyfirmata2.Arduino(PORT)
